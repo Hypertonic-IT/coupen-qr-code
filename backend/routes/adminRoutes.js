@@ -3,6 +3,7 @@ const router = express.Router();
 const Submission = require('../models/Submission');
 const QRCoupon = require('../models/QRCoupon');
 const auth = require('../middleware/auth');
+const Admin = require('../models/Admin');
 
 // Get all submissions with QR details
 router.get('/submissions', auth, async (req, res) => {
@@ -12,6 +13,19 @@ router.get('/submissions', auth, async (req, res) => {
             select: 'uniqueCode value'
         }).sort({ createdAt: -1 });
         res.json(submissions);
+    } catch (err) {
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+// Get a single submission with QR details
+router.get('/submissions/:id', auth, async (req, res) => {
+    try {
+        const submission = await Submission.findById(req.params.id).populate('qrId');
+        if (!submission) {
+            return res.status(404).json({ message: 'Submission not found' });
+        }
+        res.json(submission);
     } catch (err) {
         res.status(500).json({ message: 'Server error' });
     }
@@ -69,6 +83,24 @@ router.get('/export', auth, async (req, res) => {
         res.status(200).send(csv);
     } catch (err) {
         res.status(500).json({ message: 'Export failed' });
+    }
+});
+
+// Update Admin Profile (Username/Password)
+router.patch('/profile', auth, async (req, res) => {
+    const { username, password } = req.body;
+    try {
+        const admin = await Admin.findById(req.adminId);
+        // Admin existence is guaranteed by auth middleware, but we'll keep a simple check
+        if (!admin) return res.status(404).json({ message: 'Admin not found' });
+
+        if (username) admin.username = username;
+        if (password) admin.password = password;
+
+        await admin.save();
+        res.json({ message: 'Profile updated successfully' });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error' });
     }
 });
 

@@ -41,6 +41,47 @@ const createAdmin = async () => {
         });
         await admin.save();
         console.log('Default admin created: admin /', process.env.ADMIN_PASSWORD || 'admin123');
+        await seedData();
+    }
+}
+
+// Seed data helper
+const QRCoupon = require('./models/QRCoupon');
+const Submission = require('./models/Submission');
+const crypto = require('crypto');
+
+const seedData = async () => {
+    const qrCount = await QRCoupon.countDocuments();
+    if (qrCount === 0) {
+        console.log('Seeding sample data...');
+        const coupons = await QRCoupon.insertMany([
+            { uniqueCode: crypto.randomBytes(4).toString('hex').toUpperCase(), value: 50, isUsed: true },
+            { uniqueCode: crypto.randomBytes(4).toString('hex').toUpperCase(), value: 100, isUsed: true },
+            { uniqueCode: crypto.randomBytes(4).toString('hex').toUpperCase(), value: 50, isUsed: false },
+            { uniqueCode: crypto.randomBytes(4).toString('hex').toUpperCase(), value: 200, isUsed: false }
+        ]);
+
+        await Submission.insertMany([
+            {
+                qrId: coupons[0]._id,
+                name: 'Gaurav Kaushik',
+                mobile: '9876543210',
+                accountType: 'UPI_ID',
+                accountValue: 'gaurav@upi',
+                status: 'paid'
+            },
+            {
+                qrId: coupons[1]._id,
+                name: 'Aditi Sharma',
+                mobile: '9123456789',
+                accountType: 'AccountNumber',
+                bankName: 'HDFC Bank',
+                accountNumber: '50100123456789',
+                ifsc: 'HDFC0001234',
+                status: 'pending'
+            }
+        ]);
+        console.log('Sample data seeded successfully.');
     }
 }
 

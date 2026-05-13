@@ -30,7 +30,7 @@ const submissionSchema = new mongoose.Schema({
 
     qrImageUrl: {
         type: String,
-        required: true
+        required: false
     },
     status: {
         type: String,

@@ -4,7 +4,7 @@ const Submission = require('../models/Submission');
 const QRCoupon = require('../models/QRCoupon');
 const { upload } = require('../utils/cloudinary');
 
-router.post('/submit', upload.single('qrImage'), async (req, res) => {
+router.post('/submit', async (req, res) => {
     const {
         name,
         mobile,
@@ -16,9 +16,7 @@ router.post('/submit', upload.single('qrImage'), async (req, res) => {
         uniqueCode
     } = req.body;
 
-    if (!req.file) {
-        return res.status(400).json({ message: 'QR Code image is mandatory' });
-    }
+
 
     try {
         const coupon = await QRCoupon.findOne({ uniqueCode });
@@ -38,8 +36,7 @@ router.post('/submit', upload.single('qrImage'), async (req, res) => {
             accountValue,
             accountNumber,
             ifsc,
-            bankName,
-            qrImageUrl: req.file.path,
+            bankName
         });
 
         await newSubmission.save();

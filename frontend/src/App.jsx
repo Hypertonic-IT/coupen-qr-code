@@ -3,6 +3,7 @@ import CouponForm from './pages/CouponForm';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import QRGenerator from './pages/QRGenerator';
+import CustomerDetail from './pages/CustomerDetail';
 
 const ProtectedRoute = ({ children }) => {
     const token = localStorage.getItem('token');
@@ -27,6 +28,11 @@ function App() {
                 <Route path="/admin/qr-generator" element={
                     <ProtectedRoute>
                         <QRGenerator />
+                    </ProtectedRoute>
+                } />
+                <Route path="/admin/customer/:id" element={
+                    <ProtectedRoute>
+                        <CustomerDetail />
                     </ProtectedRoute>
                 } />
 

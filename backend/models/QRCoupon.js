@@ -10,9 +10,22 @@ const qrCouponSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  batchId: {
+    type: String,
+    index: true
+  },
   isUsed: {
     type: Boolean,
     default: false
+  },
+  isDownloaded: {
+    type: Boolean,
+    default: false
+  },
+  status: {
+    type: String,
+    enum: ['active', 'cancelled'],
+    default: 'active'
   },
   createdAt: {
     type: Date,
