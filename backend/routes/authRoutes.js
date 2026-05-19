@@ -4,7 +4,9 @@ const jwt = require('jsonwebtoken');
 const Admin = require('../models/Admin');
 
 router.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+    console.log('Login attempt:', req.body);
+    const username = req.body.username?.trim();
+    const password = req.body.password?.trim();
     try {
         const admin = await Admin.findOne({ username });
         if (!admin) {
@@ -19,7 +21,8 @@ router.post('/login', async (req, res) => {
         const token = jwt.sign({ id: admin._id }, process.env.JWT_SECRET, { expiresIn: '1d' });
         res.json({ token, username: admin.username });
     } catch (err) {
-        res.status(500).json({ message: 'Server error' });
+        console.error('Login error:', err);
+        res.status(500).json({ message: 'Server error', error: err.message });
     }
 });
 
