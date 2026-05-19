@@ -82,7 +82,7 @@ export default function QRGenerator() {
             const res = await axios.post('/api/qr/generate', { count, value }, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-            const withImg = await Promise.all(res.data.map(async qr => {
+            const withImg = await Promise.all(res.data.coupons.map(async qr => {
                 const url = `${window.location.origin}/coupon/${qr.uniqueCode}`;
                 const dataUrl = await QRCode.toDataURL(url, { width: 300, margin: 2, color: { dark: '#0f172a' } });
                 return { ...qr, dataUrl };

@@ -28,7 +28,8 @@ router.post('/generate', auth, async (req, res) => {
         const savedCoupons = await QRCoupon.insertMany(coupons);
         res.status(201).json({ coupons: savedCoupons, batchId });
     } catch (err) {
-        res.status(500).json({ message: 'Server error during QR generation' });
+        console.error('QR Generation error:', err);
+        res.status(500).json({ message: 'Server error during QR generation', error: err.message });
     }
 });
 
