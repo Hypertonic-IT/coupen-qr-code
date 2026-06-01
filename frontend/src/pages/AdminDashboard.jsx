@@ -2,8 +2,57 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate, useLocation } from 'react-router-dom';
 import QRCode from 'qrcode';
+import { writeBluetoothChunks, buildCouponPrintJob } from '../utils/thermalPrinter';
 
 const COLORS = ['#6366f1','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'];
+
+function QRCodeCanvas({ value, variant = 'medium' }) {
+    const [imgUrl, setImgUrl] = React.useState('');
+
+    const sizeMap = {
+        thermal: 110,
+        compact: 55,
+        small: 70,
+        medium: 95,
+        large: 125,
+    };
+    const size = sizeMap[variant] || 95;
+
+    React.useEffect(() => {
+        let active = true;
+        QRCode.toDataURL(value, {
+            width: 200,
+            margin: 1,
+            color: {
+                dark: '#000000',
+                light: '#ffffff'
+            }
+        }).then(url => {
+            if (active) setImgUrl(url);
+        }).catch(err => {
+            console.error(err);
+        });
+        return () => { active = false; };
+    }, [value]);
+
+    if (!imgUrl) {
+        return <div style={{ display: 'block', margin: '6px auto', width: `${size}px`, height: `${size}px`, background: '#f1f5f9', borderRadius: '4px' }} />;
+    }
+
+    return (
+        <img
+            src={imgUrl}
+            alt="QR"
+            style={{
+                display: 'block',
+                margin: '6px auto',
+                width: `${size}px`,
+                height: `${size}px`,
+                objectFit: 'contain'
+            }}
+        />
+    );
+}
 
 // ── Time Helpers ──
 function getRelativeTime(dateStr) {
@@ -132,7 +181,7 @@ function Sidebar({ active, onNav, adminName, onLogout }) {
 }
 
 export default function AdminDashboard() {
-    const [stats, setStats] = useState({ totalQR: 0, usedQR: 0, unusedQR: 0, totalValue: 0 });
+    const [stats, setStats] = useState({ totalQR: 0, usedQR: 0, printedQR: 0, unusedQR: 0, totalValue: 0 });
     const [submissions, setSubmissions] = useState([]);
     const [coupons, setCoupons] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -149,6 +198,84 @@ export default function AdminDashboard() {
     const [timeFilter, setTimeFilter] = useState('all');
     const [newProfile, setNewProfile] = useState({ username: '', password: '' });
     const [profileUpdating, setProfileUpdating] = useState(false);
+
+    // ── Web Bluetooth Direct Print States ──
+    const [bleDevice, setBleDevice] = useState(null);
+    const [bleChar, setBleChar] = useState(null);
+    const [connectingBle, setConnectingBle] = useState(false);
+    const [isPrintingBle, setIsPrintingBle] = useState(false);
+
+    const connectBluetooth = async () => {
+        setConnectingBle(true);
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [
+                    { services: ['000018f0-0000-1000-8000-00805f9b34fb'] },
+                    { namePrefix: 'Printer' },
+                    { namePrefix: 'POS' },
+                    { namePrefix: 'MTP' },
+                    { namePrefix: 'ZJ' }
+                ],
+                optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb']
+            });
+
+            const server = await device.gatt.connect();
+            const service = await server.getPrimaryService('000018f0-0000-1000-8000-00805f9b34fb');
+            const characteristics = await service.getCharacteristics();
+            const writeChar = characteristics.find(c => c.properties.write || c.properties.writeWithoutResponse);
+
+            if (!writeChar) {
+                throw new Error('Could not find a writeable channel on this printer.');
+            }
+
+            setBleDevice(device);
+            setBleChar(writeChar);
+
+            device.addEventListener('gattserverdisconnected', () => {
+                setBleDevice(null);
+                setBleChar(null);
+            });
+
+            alert(`Connected to thermal printer: ${device.name}`);
+        } catch (e) {
+            console.error(e);
+            if (e.name !== 'NotFoundError') {
+                alert('Bluetooth printer connection failed: ' + e.message);
+            }
+        } finally {
+            setConnectingBle(false);
+        }
+    };
+
+    const disconnectBluetooth = () => {
+        if (bleDevice && bleDevice.gatt.connected) {
+            bleDevice.gatt.disconnect();
+        }
+        setBleDevice(null);
+        setBleChar(null);
+    };
+
+    const printViaBluetooth = async (items) => {
+        if (!bleChar) return alert('Please connect a Bluetooth thermal printer first!');
+        setIsPrintingBle(true);
+        try {
+            const printBytes = buildCouponPrintJob(items, printSize);
+            await writeBluetoothChunks(bleChar, printBytes);
+            alert('Direct print job sent successfully to thermal printer!');
+            
+            // Mark them as printed in backend
+            const h = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+            await axios.post('/api/qr/mark-printed', { ids: items.map(c => c._id) }, { headers: h });
+            
+            load();
+            setSelected([]);
+        } catch (e) {
+            console.error(e);
+            alert('Printing failed: ' + e.message);
+        } finally {
+            setIsPrintingBle(false);
+        }
+    };
 
     useEffect(() => {
         const p = new URLSearchParams(location.search).get('view');
@@ -214,22 +341,19 @@ export default function AdminDashboard() {
         setPreviewQR({ code, dataUrl });
     };
 
-    const doPrint = async () => {
+    const doPrint = () => {
         const items = coupons.filter(c => selected.includes(c._id));
         if (!items.length) return alert('Select coupons first');
-        setLoading(true);
-        const withImg = await Promise.all(items.map(async qr => {
-            const url = `${window.location.origin}/coupon/${qr.uniqueCode}`;
-            const dataUrl = await QRCode.toDataURL(url, { width: 280 });
-            return { ...qr, dataUrl };
-        }));
-        setPrintData(withImg);
-        setLoading(false);
+        setPrintData(items);
     };
 
     const downloadSelected = () => {
         const t = localStorage.getItem('token');
         window.open(`/api/qr/download-zip?token=${t}&ids=${selected.join(',')}`, '_blank');
+        setTimeout(() => {
+            load();
+            setSelected([]);
+        }, 1500);
     };
 
     const handleProfileUpdate = async (e) => {
@@ -278,7 +402,13 @@ export default function AdminDashboard() {
     const filteredCoupons = applyTimeFilter(
         coupons
             .filter(c => c.uniqueCode?.toLowerCase().includes(filter.toLowerCase()) || c.value?.toString().includes(filter))
-            .filter(c => tab === 'all' ? true : tab === 'used' ? c.isUsed : !c.isUsed),
+            .filter(c => {
+                if (tab === 'all') return true;
+                if (tab === 'used') return c.isUsed;
+                if (tab === 'printed') return c.isDownloaded && !c.isUsed;
+                if (tab === 'unused') return !c.isDownloaded && !c.isUsed;
+                return true;
+            }),
         timeFilter
     );
 
@@ -316,15 +446,49 @@ export default function AdminDashboard() {
                         ))}
                     </div>
                 </div>
-                <button className="btn btn-primary btn-sm" onClick={() => window.print()}>
-                    <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                    Print Now
-                </button>
+                
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    {bleDevice ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <span style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span className="pulse-dot" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', display: 'inline-block', boxShadow: '0 0 8px var(--green)' }} />
+                                Connected: {bleDevice.name}
+                            </span>
+                            <button className="btn btn-secondary btn-sm" onClick={disconnectBluetooth} style={{ borderColor: 'var(--red)', color: 'var(--red)' }}>
+                                Disconnect
+                            </button>
+                            <button className="btn btn-primary btn-sm" onClick={() => printViaBluetooth(printData)} disabled={isPrintingBle} style={{ background: 'var(--green)', borderColor: 'var(--green)' }}>
+                                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                {isPrintingBle ? 'Printing...' : 'Direct Print (BLE)'}
+                            </button>
+                        </div>
+                    ) : (
+                        <button className="btn btn-secondary btn-sm" onClick={connectBluetooth} disabled={connectingBle}>
+                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m-3 0h3"/></svg>
+                            {connectingBle ? 'Connecting...' : 'Connect Thermal Printer'}
+                        </button>
+                    )}
+
+                    <button className="btn btn-primary btn-sm" onClick={async () => {
+                        window.print();
+                        try {
+                            const h = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+                            await axios.post('/api/qr/mark-printed', { ids: printData.map(c => c._id) }, { headers: h });
+                            load();
+                        } catch (e) {
+                            console.error("Failed to mark printed:", e);
+                        }
+                    }}>
+                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                        Standard Print
+                    </button>
+                </div>
             </div>
             <div className="print-sheet" style={{ display: 'grid', gridTemplateColumns: cols, gap: printSize === 'thermal' ? 32 : 12, width: printSize === 'thermal' ? '80mm' : '100%', margin: printSize === 'thermal' ? '0 auto' : 0 }}>
                 {printData.map(qr => (
                     <div key={qr._id} className="print-coupon">
                         <div className="print-coupon-brand">Scan &amp; Win</div>
+                        <QRCodeCanvas value={`${window.location.origin}/coupon/${qr.uniqueCode}`} variant={printSize} />
                         <div className="print-coupon-value">₹{qr.value}</div>
                         <div className="print-coupon-code">{qr.uniqueCode}</div>
                     </div>
@@ -365,7 +529,7 @@ export default function AdminDashboard() {
                                 <div className="stat-icon"><svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M2 9a3 3 0 000 6v2a2 2 0 002 2h16a2 2 0 002-2v-2a3 3 0 000-6V7a2 2 0 00-2-2H4a2 2 0 00-2 2z"/></svg></div>
                                 <div className="stat-label">Total Coupons</div>
                                 <div className="stat-value">{stats.totalQR.toLocaleString()}</div>
-                                <div className="stat-meta"><strong style={{ color: 'var(--green)' }}>{stats.unusedQR}</strong> available · {stats.usedQR} used</div>
+                                <div className="stat-meta"><strong style={{ color: 'var(--green)' }}>{stats.unusedQR}</strong> available · <strong style={{ color: 'var(--blue, #3b82f6)' }}>{stats.printedQR || 0}</strong> printed · {stats.usedQR} used</div>
                             </div>
                             <div className="stat-card">
                                 <div className="stat-icon"><svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg></div>
@@ -562,17 +726,36 @@ export default function AdminDashboard() {
                         <div className="card-header">
                             <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', flex: 1 }}>
                                 <span className="card-title">QR Inventory</span>
-                                <div className="tabs">
-                                    {[['all','All',coupons.length],['unused','Available',stats.unusedQR],['used','Redeemed',stats.usedQR]].map(([k,l,c]) => (
+                                {/* BLE Printer Pill */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', padding: '4px 12px', borderRadius: 'var(--radius-full)', border: '1px solid var(--border)' }}>
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: bleDevice ? 'var(--green)' : 'var(--text-3)', display: 'inline-block', boxShadow: bleDevice ? '0 0 8px var(--green)' : 'none' }} />
+                                    <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-2)' }}>
+                                        {bleDevice ? `Printer: ${bleDevice.name}` : 'BT Printer Offline'}
+                                    </span>
+                                    <button onClick={bleDevice ? disconnectBluetooth : connectBluetooth} style={{ background: 'transparent', color: bleDevice ? 'var(--red)' : 'var(--brand)', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', paddingLeft: 4 }}>
+                                        {bleDevice ? 'Disconnect' : 'Connect'}
+                                    </button>
+                                </div>
+                                <div className="tabs" style={{ marginLeft: 8 }}>
+                                    {[['all','All',coupons.length],['unused','Available',stats.unusedQR],['printed','Printed',stats.printedQR || 0],['used','Redeemed',stats.usedQR]].map(([k,l,c]) => (
                                         <button key={k} className={`tab-btn ${tab===k?'active':''}`} onClick={() => setTab(k)}>
                                             {l}<span className="tab-count">{c}</span>
                                         </button>
                                     ))}
                                 </div>
                                 {selected.length > 0 && (
-                                    <div style={{ display: 'flex', gap: 8 }}>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                         <button className="btn btn-secondary btn-sm" onClick={downloadSelected}>↓ ZIP ({selected.length})</button>
-                                        <button className="btn btn-secondary btn-sm" onClick={doPrint}>Print</button>
+                                        <button className="btn btn-secondary btn-sm" onClick={doPrint}>Print Preview</button>
+                                        {bleChar ? (
+                                            <button className="btn btn-primary btn-sm" onClick={() => printViaBluetooth(coupons.filter(c => selected.includes(c._id)))} disabled={isPrintingBle} style={{ background: 'var(--green)', borderColor: 'var(--green)' }}>
+                                                Direct Print (BLE) ({selected.length})
+                                            </button>
+                                        ) : (
+                                            <button className="btn btn-secondary btn-sm" onClick={connectBluetooth} disabled={connectingBle}>
+                                                Connect Printer &amp; Print Direct
+                                            </button>
+                                        )}
                                         <button className="btn btn-danger btn-sm" onClick={bulkDelete}>Delete</button>
                                     </div>
                                 )}

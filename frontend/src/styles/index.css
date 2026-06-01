@@ -452,4 +452,27 @@ tbody tr.row-selected td { background: var(--brand-bg); }
 @media print {
   .print-toolbar, .no-print { display: none !important; }
   .print-sheet { padding: 0; }
+  body, .print-sheet, .print-coupon, .print-coupon * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
+.print-coupon-svg-container {
+  display: block;
+  width: 100%;
+}
+.print-coupon-svg-container svg {
+  width: 100% !important;
+  height: auto !important;
+  display: block;
+}
+
+@keyframes pulseGreen {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1.1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.pulse-dot {
+  animation: pulseGreen 2s infinite;
 }

@@ -63,6 +63,10 @@ router.get('/download-zip', auth, async (req, res) => {
         const coupons = await query;
         if (coupons.length === 0) return res.status(404).json({ message: 'No coupons found' });
 
+        // Auto mark downloaded coupons as printed/downloaded in MongoDB
+        const idsToUpdate = coupons.map(c => c._id);
+        await QRCoupon.updateMany({ _id: { $in: idsToUpdate } }, { $set: { isDownloaded: true } });
+
         const archive = archiver('zip', { zlib: { level: 9 } });
         res.attachment(`qr-codes-${Date.now()}.zip`);
         archive.pipe(res);
@@ -273,6 +277,21 @@ router.post('/bulk-delete', auth, async (req, res) => {
         res.json({ message: 'Bulk delete successful' });
     } catch (err) {
         res.status(500).json({ message: 'Bulk delete failed' });
+    }
+});
+
+// Bulk mark coupons as printed/downloaded
+router.post('/mark-printed', auth, async (req, res) => {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids)) {
+        return res.status(400).json({ message: 'IDs array is required' });
+    }
+    try {
+        await QRCoupon.updateMany({ _id: { $in: ids } }, { $set: { isDownloaded: true } });
+        res.json({ message: 'Coupons marked as printed/downloaded successfully' });
+    } catch (err) {
+        console.error('Error marking printed:', err);
+        res.status(500).json({ message: 'Failed to mark printed' });
     }
 });
 

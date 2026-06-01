@@ -51,7 +51,8 @@ router.get('/stats', auth, async (req, res) => {
     try {
         const totalQR = await QRCoupon.countDocuments();
         const usedQR = await QRCoupon.countDocuments({ isUsed: true });
-        const unusedQR = totalQR - usedQR;
+        const printedQR = await QRCoupon.countDocuments({ isDownloaded: true, isUsed: false });
+        const unusedQR = await QRCoupon.countDocuments({ isUsed: false, isDownloaded: false });
 
         // Sum of values of used coupons
         const usedCoupons = await QRCoupon.find({ isUsed: true });
@@ -60,6 +61,7 @@ router.get('/stats', auth, async (req, res) => {
         res.json({
             totalQR,
             usedQR,
+            printedQR,
             unusedQR,
             totalValue
         });
